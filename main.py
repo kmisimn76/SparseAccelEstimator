@@ -15,6 +15,7 @@ bias_write_overhead  = 0#121
 l2_loop_overhead     = 0#2
 output_II            = 2
 '''
+import math
 
 #Overhead define
 #L1 Level
@@ -184,21 +185,24 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
         #HW : PE size
         PE_num           = hw_def.ARRAY_K * hw_def.ARRAY_C * hw_def.ARRAY_H * hw_def.ARRAY_W
         #HW : L1 BW
-        weight_bandwidth = hw_def.ARRAY_K * hw_def.L1_BANK
+        #weight_bandwidth = hw_def.ARRAY_K * hw_def.L1_BANK
+        weight_bandwidth = hw_def.ARRAY_C
         data_bandwidth   = hw_def.ARRAY_C * hw_def.L1_BANK
         output_bandwidth = hw_def.ARRAY_K * hw_def.L1_BANK
         #HW : L2 BW
-        weight_l2_bandwidth = hw_def.ARRAY_K * hw_def.L2_BANK
+        #weight_l2_bandwidth = hw_def.ARRAY_K * hw_def.L2_BANK
+        weight_l2_bandwidth = hw_def.ARRAY_C
         data_l2_bandwidth   = hw_def.ARRAY_C * hw_def.L2_BANK
         output_l2_bandwidth = hw_def.ARRAY_K * hw_def.L2_BANK #GROUP is just partial sum
         #HW : DRAM bitwidth
-        weight_dram_bitwidth = hw_def.ARRAY_K
-        data_dram_bitwidth   = hw_def.ARRAY_C
-        output_dram_bitwidth = hw_def.ARRAY_K
+        weight_dram_bitwidth = hw_def.ARRAY_C
+        data_dram_bitwidth   = hw_def.ARRAY_C #* hw_def.L2_BANK
+        output_dram_bitwidth = hw_def.ARRAY_K * hw_def.L2_BANK
         #HW : DRAM burst
-        weight_l2_burst_size = (mapping_def.K_L2/hw_def.ARRAY_K)*mapping_def.C_L2*mapping_def.R_L2*mapping_def.S_L2*weight_dram_bitwidth
-        data_l2_burst_size   = mapping_def.W_in_L2*data_dram_bitwidth
-        output_l2_burst_size = mapping_def.W_L2*output_dram_bitwidth
+        weight_l2_burst_size = (mapping_def.C_L2/hw_def.ARRAY_C)*mapping_def.K_L2*mapping_def.R_L2*mapping_def.S_L2*weight_dram_bitwidth
+        #data_l2_burst_size   = (mapping_def.W_in_L2 // hw_def.L2_BANK)*data_dram_bitwidth
+        data_l2_burst_size   = (mapping_def.W_in_L2)*data_dram_bitwidth
+        output_l2_burst_size = (mapping_def.W_L2 // hw_def.L2_BANK)*output_dram_bitwidth
     elif is_output_stationary:
         #HW : PE size
         PE_num           = hw_def.ARRAY_K * hw_def.ARRAY_C * hw_def.ARRAY_H * hw_def.ARRAY_W
@@ -211,13 +215,13 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
         data_l2_bandwidth   = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
         output_l2_bandwidth = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
         #HW : DRAM bitwidth
-        weight_dram_bitwidth = hw_def.ARRAY_K
-        data_dram_bitwidth   = hw_def.ARRAY_H * hw_def.ARRAY_W
-        output_dram_bitwidth = hw_def.ARRAY_H * hw_def.ARRAY_W
+        weight_dram_bitwidth = hw_def.ARRAY_K * hw_def.L2_BANK
+        data_dram_bitwidth   = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
+        output_dram_bitwidth = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
         #HW : DRAM burst
-        weight_l2_burst_size = (mapping_def.K_L2/hw_def.ARRAY_K)*mapping_def.C_L2*mapping_def.R_L2*mapping_def.S_L2*weight_dram_bitwidth
-        data_l2_burst_size   = mapping_def.C_L2*data_dram_bitwidth
-        output_l2_burst_size = mapping_def.K_L2*output_dram_bitwidth
+        weight_l2_burst_size = (mapping_def.K_L2/hw_def.ARRAY_K)*mapping_def.C_L2*mapping_def.R_L2*mapping_def.S_L2*weight_dram_bitwidth / hw_def.L2_BANK
+        data_l2_burst_size   = mapping_def.C_L2*data_dram_bitwidth / hw_def.L2_BANK
+        output_l2_burst_size = mapping_def.K_L2*output_dram_bitwidth / hw_def.L2_BANK
     elif is_input_stationary:
         #raise "unsupported"
         #HW : PE size
@@ -232,8 +236,8 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
         output_l2_bandwidth = hw_def.ARRAY_W * hw_def.L2_BANK
         #HW : DRAM bitwidth
         weight_dram_bitwidth = hw_def.ARRAY_C
-        data_dram_bitwidth   = hw_def.ARRAY_W
-        output_dram_bitwidth = hw_def.ARRAY_W
+        data_dram_bitwidth   = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
+        output_dram_bitwidth = hw_def.ARRAY_H * hw_def.ARRAY_W * hw_def.L2_BANK
         #HW : DRAM burst
         weight_l2_burst_size = mapping_def.K_L2*(mapping_def.C_L2/hw_def.ARRAY_C)*mapping_def.R_L2*mapping_def.S_L2*weight_dram_bitwidth
         data_l2_burst_size   = mapping_def.C_L2*data_dram_bitwidth
@@ -269,15 +273,27 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
     #print(weight_l2_size/weight_l2_burst_size, data_l2_size/data_l2_burst_size, output_l2_size/output_l2_burst_size)
     
     #weight_l2_cycle = (weight_l2_size*max(1, weight_dram_bitwidth*(weight_byte*8)/512) / weight_dram_bitwidth) + (weight_l2_size/weight_l2_burst_size)*dram_burst_delay \
-    weight_l2_cycle = (weight_l2_size*(weight_dram_bitwidth*(weight_byte*8)/512) / weight_dram_bitwidth) + (weight_l2_size/weight_l2_burst_size)*dram_burst_delay \
+    weight_l2_II = max(1, weight_dram_bitwidth*(weight_byte*8)/512)
+    weight_l2_cycle = (weight_l2_size*weight_l2_II / weight_dram_bitwidth) + (weight_l2_size/weight_l2_burst_size)*dram_burst_delay \
                         + (weight_l2_size / dram_burst_size)*dram_continous_delay + weight_l2_overhead #TODO: exchange dram_burst_delay<->dram_continous_delay
 
     #data_l2_cycle = (data_l2_size*max(1, data_dram_bitwidth*(input_byte*8)/512) / data_dram_bitwidth) + (data_l2_size/data_l2_burst_size)*dram_burst_delay \
-    data_l2_cycle = (data_l2_size*(data_dram_bitwidth*(input_byte*8)/512) / data_dram_bitwidth) + (data_l2_size/data_l2_burst_size)*dram_burst_delay \
+    data_l2_II = max(1, data_dram_bitwidth*(input_byte*8)/512)
+    data_l2_cycle = (data_l2_size*data_l2_II / data_dram_bitwidth) + (data_l2_size/data_l2_burst_size)*dram_burst_delay \
                         + (data_l2_size / dram_burst_size)*dram_continous_delay + data_l2_overhead #TODO: exchange dram_burst_delay<->dram_continous_delay
 
-    output_l2_cycle = ((output_l2_size*max(1, output_dram_bitwidth*(output_byte*8)/512) / output_dram_bitwidth) + (output_l2_size/output_l2_burst_size)*dram_burst_delay \
+    '''
+    output_l2_II = max(1, output_dram_bitwidth*(output_byte*8)/512)
+    output_l2_cycle = ((output_l2_size*output_l2_II / output_dram_bitwidth) + (output_l2_size/output_l2_burst_size)*dram_burst_delay \
                         + (output_l2_size / dram_burst_size)*dram_continous_delay + output_l2_overhead)*2 #TODO: exchange dram_burst_delay<->dram_continous_delay
+    dram_only_write_speedup = 1 - ((mapping_def.L2_TILENUM_K*mapping_def.L2_TILENUM_H*mapping_def.L2_TILENUM_W)/l2_loop_iteration)/2
+    output_l2_cycle *= dram_only_write_speedup
+    '''
+    output_l2_II = max(1, output_dram_bitwidth*(output_byte*8)/512)
+    dram_only_write_speedup = 1 - ((mapping_def.L2_TILENUM_K*mapping_def.L2_TILENUM_H*mapping_def.L2_TILENUM_W)/l2_loop_iteration)/2
+    output_l2_cycle = (output_l2_size*output_l2_II / output_dram_bitwidth)*2*(dram_only_write_speedup) + (output_l2_size/output_l2_burst_size)*dram_burst_delay*2 \
+                        + (output_l2_size / dram_burst_size)*dram_continous_delay + output_l2_overhead*2 #TODO: exchange dram_burst_delay<->dram_continous_delay
+    #print(weight_l2_II,data_l2_II,output_l2_II)
     '''
     dram_bw = 73
     weight_l2_cycle = weight_l2_size / dram_bw
@@ -285,8 +301,6 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
     output_l2_cycle =  output_l2_size / dram_bw
     '''
 
-    dram_only_write_speedup = 1 - ((mapping_def.L2_TILENUM_K*mapping_def.L2_TILENUM_H*mapping_def.L2_TILENUM_W)/l2_loop_iteration)/2
-    output_l2_cycle *= dram_only_write_speedup
 
 
     #if 1, their is no reuse
@@ -351,6 +365,23 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
                         + (max(data_l1_cycle,weight_l1_cycle)+output_l1_cycle)/l1_loop_iteration \
                         +max(data_l2_cycle,weight_l2_cycle)+output_l2_cycle
 
+    l2_weight_bottleneck = (weight_l2_cycle*block_size/weight_reuse_count)*l2_loop_iteration/block_size
+    l2_data_bottleneck = (data_l2_cycle*block_size/data_reuse_count)*l2_loop_iteration/block_size
+    l2_output_bottleneck = (output_l2_cycle*block_size/output_reuse_count)*l2_loop_iteration/block_size
+    l1_weight_bottleneck = weight_l1_cycle*block_size*l2_loop_iteration/block_size
+    l1_data_bottleneck = data_l1_cycle*block_size*l2_loop_iteration/block_size
+    l1_output_bottleneck = output_l1_cycle*block_size*l2_loop_iteration/block_size
+    pe_bottleneck = SIMD_cycle*block_size*l2_loop_iteration/block_size
+    bottleneck = max(l2_weight_bottleneck, l2_data_bottleneck, l2_output_bottleneck, l1_weight_bottleneck, l1_data_bottleneck, l1_output_bottleneck, pe_bottleneck)
+    if verbose == -1:
+        print("{:.02f}".format(total_cycle), end=" ") # PE
+        print("{:.02f}".format(pe_bottleneck), end=" ") # PE
+        print("{:.02f}".format(max(l2_weight_bottleneck,l2_data_bottleneck,l2_output_bottleneck)), end=" ") #DRAM bottleneck
+        print("{:.02f}".format(max(l1_weight_bottleneck,l1_data_bottleneck,l1_output_bottleneck)), end=" ") #buffer bottleneck
+        print("{:.02f}".format([l2_weight_bottleneck,l2_data_bottleneck,l2_output_bottleneck][0]), end=" ") #DRAM bottleneck
+        print("{:.02f}".format([l2_weight_bottleneck,l2_data_bottleneck,l2_output_bottleneck][1]), end=" ") #DRAM bottleneck
+        print("{:.02f}".format([l2_weight_bottleneck,l2_data_bottleneck,l2_output_bottleneck][2])) #DRAM bottleneck
+
     if verbose > 0:
         print()
         print("ID:", ID)
@@ -409,24 +440,30 @@ def calculateSparseAccel(hw_def, mapping_def, verbose=0, ID=0):
 
 if __name__=="__main__":
 
+    print("usage: python main.py ../../outdir/res")
     for l in range(53):
         import sys
         #with open("./../../../outdir/res/00/hw_.yaml", "r") as f:
         #with open(sys.argv[1], "r") as f:
-        with open("../SparseNAAS/outdir/res/{:02d}/hw_.yaml".format(l), "r") as f:
-            data = [float(dt) for dt in f.readline().split(',')]
-            hw_sample = HW_DEF(data[0], data[1], data[2], data[4], data[4])
+        file_path = sys.argv[1] if len(sys.argv)>1 else "../SparseNAAS/outdir/res5"
+        
+        with open("{}/{:02d}/hw_.yaml".format(file_path, l), "r") as f:
+        #with open("../SparseNAAS/outdir/res5/{:02d}/hw_.yaml".format(l), "r") as f:
+            data = [dt for dt in f.readline().split(',')]
+            #hw_sample = HW_DEF(float(data[0]), float(data[1]), float(data[2]), float(data[4]), float(data[4]))
+            hw_sample = HW_DEF(float(data[0]), float(data[1]), float(data[2]), float(data[3]), float(data[5]), float(data[5]))
             d = []
             for i in range(5):
-                d += [int(dt) for dt in f.readline().split(',')]
+                d += [int(float(dt)) for dt in f.readline().split(',')]
             mapping_sample_def = MAPPING_DEF(d[0], d[1], d[2], d[3], d[4], d[5], 
                                             d[6], d[7], d[8], d[9], d[10], d[11], 
                                             d[12], d[13], d[14], d[15], d[16], d[17], 
                                             d[18], d[19], d[20], d[21], d[22], d[23], 
                                             d[24], d[25], d[26], d[27], d[28], d[29], 
                                        1.0)
+                                       #float(data[13]))
         #print(calculateSparseAccel(hw_sample, mapping_sample_def, verbose=0, ID=l+1))
-        calculateSparseAccel(hw_sample, mapping_sample_def, verbose=1, ID=l+1)
+        calculateSparseAccel(hw_sample, mapping_sample_def, verbose=-1, ID=l+1)
     print()
 
     hw_def_weight_sta = HW_DEF(32, 32, 1, 1, 1)
